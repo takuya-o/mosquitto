@@ -1,4 +1,4 @@
-FROM alpine:3.6
+FROM alpine:edge
 MAINTAINER David Audet <david.audet@ca.com>
 
 LABEL Description="Eclipse Mosquitto MQTT Broker"
