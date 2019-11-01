@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2009-2018 Roger Light <roger@atchoo.org>
+Copyright (c) 2009-2019 Roger Light <roger@atchoo.org>
 
 All rights reserved. This program and the accompanying materials
 are made available under the terms of the Eclipse Public License v1.0
@@ -91,7 +91,7 @@ int drop_privileges(struct mosquitto__config *config, bool temporary)
 {
 #if !defined(__CYGWIN__) && !defined(WIN32)
 	struct passwd *pwd;
-	char err[256];
+	char *err;
 	int rc;
 
 	const char *snap = getenv("SNAP_NAME");
@@ -108,7 +108,7 @@ int drop_privileges(struct mosquitto__config *config, bool temporary)
 				return 1;
 			}
 			if(initgroups(config->user, pwd->pw_gid) == -1){
-				strerror_r(errno, err, 256);
+				err = strerror(errno);
 				log__printf(NULL, MOSQ_LOG_ERR, "Error setting groups whilst dropping privileges: %s.", err);
 				return 1;
 			}
@@ -118,7 +118,7 @@ int drop_privileges(struct mosquitto__config *config, bool temporary)
 				rc = setgid(pwd->pw_gid);
 			}
 			if(rc == -1){
-				strerror_r(errno, err, 256);
+				err = strerror(errno);
 				log__printf(NULL, MOSQ_LOG_ERR, "Error setting gid whilst dropping privileges: %s.", err);
 				return 1;
 			}
@@ -128,7 +128,7 @@ int drop_privileges(struct mosquitto__config *config, bool temporary)
 				rc = setuid(pwd->pw_uid);
 			}
 			if(rc == -1){
-				strerror_r(errno, err, 256);
+				err = strerror(errno);
 				log__printf(NULL, MOSQ_LOG_ERR, "Error setting uid whilst dropping privileges: %s.", err);
 				return 1;
 			}
@@ -144,19 +144,19 @@ int drop_privileges(struct mosquitto__config *config, bool temporary)
 int restore_privileges(void)
 {
 #if !defined(__CYGWIN__) && !defined(WIN32)
-	char err[256];
+	char *err;
 	int rc;
 
 	if(getuid() == 0){
 		rc = setegid(0);
 		if(rc == -1){
-			strerror_r(errno, err, 256);
+			err = strerror(errno);
 			log__printf(NULL, MOSQ_LOG_ERR, "Error setting gid whilst restoring privileges: %s.", err);
 			return 1;
 		}
 		rc = seteuid(0);
 		if(rc == -1){
-			strerror_r(errno, err, 256);
+			err = strerror(errno);
 			log__printf(NULL, MOSQ_LOG_ERR, "Error setting uid whilst restoring privileges: %s.", err);
 			return 1;
 		}
@@ -169,12 +169,12 @@ int restore_privileges(void)
 void mosquitto__daemonise(void)
 {
 #ifndef WIN32
-	char err[256];
+	char *err;
 	pid_t pid;
 
 	pid = fork();
 	if(pid < 0){
-		strerror_r(errno, err, 256);
+		err = strerror(errno);
 		log__printf(NULL, MOSQ_LOG_ERR, "Error in fork: %s", err);
 		exit(1);
 	}
@@ -182,7 +182,7 @@ void mosquitto__daemonise(void)
 		exit(0);
 	}
 	if(setsid() < 0){
-		strerror_r(errno, err, 256);
+		err = strerror(errno);
 		log__printf(NULL, MOSQ_LOG_ERR, "Error in setsid: %s", err);
 		exit(1);
 	}
@@ -204,11 +204,9 @@ int main(int argc, char *argv[])
 	struct mosquitto__config config;
 	int i, j;
 	FILE *pid;
-	int listener_max;
 	int rc;
 #ifdef WIN32
 	SYSTEMTIME st;
-	_setmaxstdio(2048);
 #else
 	struct timeval tv;
 #endif
@@ -294,7 +292,6 @@ int main(int argc, char *argv[])
 	sys_tree__init(&int_db);
 #endif
 
-	listener_max = -1;
 	listensock_index = 0;
 	for(i=0; i<config.listener_count; i++){
 		if(config.listeners[i].protocol == mp_mqtt){
@@ -323,14 +320,11 @@ int main(int argc, char *argv[])
 					return 1;
 				}
 				listensock[listensock_index] = config.listeners[i].socks[j];
-				if(listensock[listensock_index] > listener_max){
-					listener_max = listensock[listensock_index];
-				}
 				listensock_index++;
 			}
 		}else if(config.listeners[i].protocol == mp_websockets){
 #ifdef WITH_WEBSOCKETS
-			config.listeners[i].ws_context = mosq_websockets_init(&config.listeners[i], config.websockets_log_level);
+			config.listeners[i].ws_context = mosq_websockets_init(&config.listeners[i], &config);
 			if(!config.listeners[i].ws_context){
 				log__printf(NULL, MOSQ_LOG_ERR, "Error: Unable to create websockets listener on port %d.", config.listeners[i].port);
 				return 1;
@@ -370,10 +364,9 @@ int main(int argc, char *argv[])
 #endif
 
 	run = 1;
-	rc = mosquitto_main_loop(&int_db, listensock, listensock_count, listener_max);
+	rc = mosquitto_main_loop(&int_db, listensock, listensock_count);
 
 	log__printf(NULL, MOSQ_LOG_INFO, "mosquitto version %s terminating", VERSION);
-	log__close(&config);
 
 #ifdef WITH_WEBSOCKETS
 	for(i=0; i<int_db.config->listener_count; i++){
@@ -384,15 +377,20 @@ int main(int argc, char *argv[])
 	}
 #endif
 
+	/* FIXME - this isn't quite right, all wills with will delay zero should be
+	 * sent now, but those with positive will delay should be persisted and
+	 * restored, pending the client reconnecting in time. */
 	HASH_ITER(hh_id, int_db.contexts_by_id, ctxt, ctxt_tmp){
 		context__send_will(&int_db, ctxt);
 	}
+	will_delay__send_all(&int_db);
 
 #ifdef WITH_PERSISTENCE
 	if(config.persistence){
 		persist__backup(&int_db, true);
 	}
 #endif
+	session_expiry__remove_all(&int_db);
 
 	HASH_ITER(hh_id, int_db.contexts_by_id, ctxt, ctxt_tmp){
 #ifdef WITH_WEBSOCKETS
@@ -437,6 +435,7 @@ int main(int argc, char *argv[])
 		remove(config.pid_file);
 	}
 
+	log__close(&config);
 	config__cleanup(int_db.config);
 	net__broker_cleanup();
 

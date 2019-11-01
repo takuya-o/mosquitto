@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2016-2018 Roger Light <roger@atchoo.org>
+Copyright (c) 2016-2019 Roger Light <roger@atchoo.org>
 
 All rights reserved. This program and the accompanying materials
 are made available under the terms of the Eclipse Public License v1.0
@@ -41,6 +41,8 @@ struct userdata__simple {
 static void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
 	struct userdata__callback *userdata = obj;
+
+	UNUSED(rc);
 
 	mosquitto_subscribe(mosq, NULL, userdata->topic, userdata->qos);
 }

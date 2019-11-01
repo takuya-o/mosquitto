@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2009-2018 Roger Light <roger@atchoo.org>
+Copyright (c) 2009-2019 Roger Light <roger@atchoo.org>
 
 All rights reserved. This program and the accompanying materials
 are made available under the terms of the Eclipse Public License v1.0
@@ -41,18 +41,7 @@ static unsigned long max_memcount = 0;
 static size_t mem_limit = 0;
 void memory__set_limit(size_t lim)
 {
-#ifdef LINUX
-	struct rlimit r;
-
-	r.rlim_cur = lim;
-	r.rlim_max = lim;
-
-	setrlimit(RLIMIT_CPU, &r);
-
-	mem_limit = 0;
-#else
 	mem_limit = lim;
-#endif
 }
 #endif
 
